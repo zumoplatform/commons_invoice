@@ -4,6 +4,14 @@ github.com/jinzhu/inflection v1.0.0 h1:K317FqzuhWc8YvSVlFMCCUb36O/S9MCKRDI7QkRKD
 github.com/jinzhu/inflection v1.0.0/go.mod h1:h+uFLlag+Qp1Va5pdKtLDYj+kHp5pxUVkryuEj+Srlc=
 github.com/jinzhu/now v1.1.5 h1:/o9tlHleP7gOFmsnYNz3RGnqzefHA47wQpKrrdTIwXQ=
 github.com/jinzhu/now v1.1.5/go.mod h1:d3SSVoowX0Lcu0IBviAWJpolVfI5UJVZZ7cO71lE/z8=
+github.com/zumoplatform/commons_customer v1.0.0 h1:VrHfrpPNf2taL4JtnlvxUOPjMKXAzdhT1qArGrtPuSs=
+github.com/zumoplatform/commons_customer v1.0.0/go.mod h1:pNC/HTHcOuGOAJ+8niSkTJODhp0awYS9lGLhJZ/C28c=
+github.com/zumoplatform/commons_invoice_item v1.0.0 h1:ZZ+l6GC/BcFi1YQy6p47rvjmdjblvM6uPifoKMTF0hI=
+github.com/zumoplatform/commons_invoice_item v1.0.0/go.mod h1:81Bic5YUvnRy39OwxxMp5JOtabrC3yAFlJmu+Qt8GZM=
+github.com/zumoplatform/commons_organization v1.0.0 h1:yfakAPs75nA7ciovEyRRdg8PkP+nb7199JUnNjCjdik=
+github.com/zumoplatform/commons_organization v1.0.0/go.mod h1:8w8ywh+0bBcP8sEeg0Bhi3iP+XjnO+isf41/CtbAqFI=
+github.com/zumoplatform/commons_product v1.0.0 h1:vRbqAg+lU/4GTfZtjzpCbdXTctr4KZaPgfIAugLlTjo=
+github.com/zumoplatform/commons_product v1.0.0/go.mod h1:cXWlPACWQNlQ0PMZ2JgbAJAqfVKx+ri/v0cndMitkkQ=
 golang.org/x/text v0.20.0 h1:gK/Kv2otX8gz+wn7Rmb3vT96ZwuoxnQlY+HlJVj7Qug=
 golang.org/x/text v0.20.0/go.mod h1:D4IsuqiFMhST5bX19pQ9ikHC2GsaKyk/oF+pn3ducp4=
 gorm.io/gorm v1.31.1 h1:7CA8FTFz/gRfgqgpeKIBcervUn3xSyPUmr6B2WXJ7kg=
