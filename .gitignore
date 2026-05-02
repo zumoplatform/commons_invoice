@@ -1,0 +1,10 @@
+# Build artifacts
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+
+# macOS
+.DS_Store
