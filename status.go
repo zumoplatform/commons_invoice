@@ -14,8 +14,14 @@ const (
 
 // statusTransitions maps each status to the set of statuses it may move to.
 // Terminal statuses (paid, void) map to empty sets.
+//
+// draft → paid is allowed for in-person / cash sales: the invoice was
+// drafted and paid on the spot, never emailed. Skipping "sent" in
+// that case is intentional. The inventory auto-deduct still fires
+// correctly — it gates on the destination being "paid", not on
+// which prior status was in play.
 var statusTransitions = map[Status]map[Status]bool{
-	StatusDraft:   {StatusSent: true, StatusVoid: true},
+	StatusDraft:   {StatusSent: true, StatusPaid: true, StatusVoid: true},
 	StatusSent:    {StatusPaid: true, StatusOverdue: true, StatusVoid: true},
 	StatusOverdue: {StatusPaid: true, StatusVoid: true},
 	StatusPaid:    {},
