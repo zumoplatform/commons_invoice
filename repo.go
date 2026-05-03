@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/zumoplatform/commons_product"
 	"gorm.io/gorm"
 )
 
@@ -205,15 +206,21 @@ type UpdateInput struct {
 // Update applies in to the invoice (organizationID, invoiceID). When
 // in.Status is set, the FSM is checked against the current status before any
 // field is changed. Returns the post-update row, with Items preloaded.
+//
+// Side-effect parity with UpdateStatus: if the patch transitions Status
+// to "paid" and inventory hasn't been deducted yet, the inventory
+// adjustment runs in the same transaction.
 func (r Repo) Update(organizationID, invoiceID int64, in UpdateInput) (*Invoice, error) {
 	var inv Invoice
 	if err := r.DB.
+		Preload("Items").
 		Where("organization_id = ? AND id = ?", organizationID, invoiceID).
 		First(&inv).Error; err != nil {
 		return nil, err
 	}
 
 	updates := map[string]any{}
+	transitioningToPaid := false
 
 	if in.Status != nil {
 		next := Status(*in.Status)
@@ -225,6 +232,9 @@ func (r Repo) Update(organizationID, invoiceID int64, in UpdateInput) (*Invoice,
 			return nil, ErrInvalidTransition{From: current, To: next}
 		}
 		updates["status"] = string(next)
+		if next == StatusPaid && current != StatusPaid && inv.InventoryDeductedAt == nil {
+			transitioningToPaid = true
+		}
 	}
 	if in.CustomerID != nil {
 		updates["customer_id"] = *in.CustomerID
@@ -248,8 +258,19 @@ func (r Repo) Update(organizationID, invoiceID int64, in UpdateInput) (*Invoice,
 		updates["notes"] = *in.Notes
 	}
 
-	if len(updates) > 0 {
-		if err := r.DB.Model(&inv).Updates(updates).Error; err != nil {
+	if len(updates) > 0 || transitioningToPaid {
+		err := r.DB.Transaction(func(tx *gorm.DB) error {
+			if len(updates) > 0 {
+				if err := tx.Model(&inv).Updates(updates).Error; err != nil {
+					return err
+				}
+			}
+			if transitioningToPaid {
+				return deductInventoryForInvoice(tx, &inv)
+			}
+			return nil
+		})
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -278,12 +299,22 @@ func (r Repo) Delete(organizationID, invoiceID int64) error {
 
 // UpdateStatus transitions an invoice to next, validating both that next is a
 // known status and that the move is allowed from the current status.
+//
+// Inventory side-effect: when transitioning to "paid" (and inventory hasn't
+// already been deducted for this invoice), the line items are loaded and
+// each product's `quantity` is decremented by the line's `quantity`. The
+// status update + inventory adjustments + inventory_deducted_at stamp all
+// run in a single transaction — partial failure rolls everything back.
+// `paid` is terminal in the FSM, so this guard ensures the deduction can
+// never run twice for the same invoice (defensive against backups, manual
+// SQL, or future FSM relaxations).
 func (r Repo) UpdateStatus(organizationID, invoiceID int64, next Status) (*Invoice, error) {
 	if !next.IsValid() {
 		return nil, ErrInvalidStatus{Status: next}
 	}
 	var inv Invoice
 	if err := r.DB.
+		Preload("Items").
 		Where("organization_id = ? AND id = ?", organizationID, invoiceID).
 		First(&inv).Error; err != nil {
 		return nil, err
@@ -295,9 +326,39 @@ func (r Repo) UpdateStatus(organizationID, invoiceID int64, next Status) (*Invoi
 	if !current.CanTransitionTo(next) {
 		return nil, ErrInvalidTransition{From: current, To: next}
 	}
-	inv.Status = string(next)
-	if err := r.DB.Save(&inv).Error; err != nil {
+
+	err := r.DB.Transaction(func(tx *gorm.DB) error {
+		inv.Status = string(next)
+		if err := tx.Save(&inv).Error; err != nil {
+			return err
+		}
+		if next == StatusPaid && inv.InventoryDeductedAt == nil {
+			return deductInventoryForInvoice(tx, &inv)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return &inv, nil
+	// Re-fetch so the response reflects InventoryDeductedAt + any
+	// product-row touches (callers don't typically read the products
+	// off the invoice, but staying consistent costs nothing).
+	return r.GetByID(organizationID, invoiceID)
+}
+
+// deductInventoryForInvoice runs inside a transaction. Every line item
+// triggers AdjustQuantity(-qty) on its product; then inventory_deducted_at
+// is stamped on the invoice. Negative `quantity` is allowed at the column
+// level (no CHECK constraint) so an oversold product simply goes negative
+// — surfacing that to the user via the low-stock UI is more useful than
+// a hard failure during checkout.
+func deductInventoryForInvoice(tx *gorm.DB, inv *Invoice) error {
+	productRepo := commons_product.NewRepo(tx)
+	for _, item := range inv.Items {
+		if err := productRepo.AdjustQuantity(tx, inv.OrganizationID, item.ProductID, -item.Quantity); err != nil {
+			return fmt.Errorf("adjust quantity for product %d: %w", item.ProductID, err)
+		}
+	}
+	now := time.Now().UTC()
+	return tx.Model(inv).Update("inventory_deducted_at", &now).Error
 }

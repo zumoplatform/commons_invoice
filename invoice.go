@@ -18,9 +18,15 @@ type Invoice struct {
 	Subtotal       float64    `json:"subtotal" gorm:"type:numeric(12,2);not null;default:0"`
 	Tax            float64    `json:"tax" gorm:"type:numeric(12,2);not null;default:0"`
 	Amount         float64    `json:"amount" gorm:"type:numeric(12,2);not null;default:0"`
-	Notes          string     `json:"notes" gorm:"type:text;not null;default:''"`
-	CreatedAt      time.Time  `json:"created_at" gorm:"not null;default:now()"`
-	UpdatedAt      time.Time  `json:"updated_at" gorm:"not null;default:now()"`
+	Notes string `json:"notes" gorm:"type:text;not null;default:''"`
+	// InventoryDeductedAt is the one-shot guard for the auto-deduct on
+	// status → "paid". Stays nil until the deduction transaction runs;
+	// once stamped, future status churn never touches inventory again
+	// (paid is terminal in the FSM anyway, but the column is the safety
+	// belt against backups, manual SQL, or future relaxations of the FSM).
+	InventoryDeductedAt *time.Time `json:"inventory_deducted_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at" gorm:"not null;default:now()"`
+	UpdatedAt           time.Time  `json:"updated_at" gorm:"not null;default:now()"`
 
 	Organization *commons_organization.Organization `json:"organization,omitempty" gorm:"foreignKey:OrganizationID;references:ID;constraint:OnDelete:CASCADE"`
 	Customer     *commons_customer.Customer         `json:"customer,omitempty" gorm:"foreignKey:CustomerID;references:ID;constraint:OnDelete:RESTRICT"`
