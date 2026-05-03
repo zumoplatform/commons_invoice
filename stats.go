@@ -41,6 +41,49 @@ type TopCustomerStat struct {
 	PaidCount  int64   `json:"paid_count"`
 }
 
+// RevenueRange is a duration the dashboard chart can display.
+type RevenueRange string
+
+const (
+	RevenueRange7d  RevenueRange = "7d"
+	RevenueRange30d RevenueRange = "30d"
+	RevenueRange90d RevenueRange = "90d"
+	RevenueRange1y  RevenueRange = "1y"
+)
+
+// rangeConfig drives bucket granularity + total span. Daily buckets
+// stay readable up to ~90 points; for a year we shift to weekly so
+// the chart is still a smooth line and not 365 stacked dots.
+var rangeConfig = map[RevenueRange]struct {
+	Granularity string // "day" or "week"
+	Interval    string // Postgres interval literal for the lookback
+	Step        string // generate_series step matching Granularity
+}{
+	RevenueRange7d:  {"day", "6 days", "1 day"},
+	RevenueRange30d: {"day", "29 days", "1 day"},
+	RevenueRange90d: {"day", "89 days", "1 day"},
+	RevenueRange1y:  {"week", "51 weeks", "1 week"},
+}
+
+// RevenuePoint is one bucket on the line chart.
+type RevenuePoint struct {
+	// Bucket is the start of the bucket window (ISO 8601). Daily
+	// buckets are YYYY-MM-DD; weekly buckets are the Monday of that
+	// ISO week, also YYYY-MM-DD.
+	Bucket string  `json:"bucket"`
+	Total  float64 `json:"total"`
+	Count  int64   `json:"count"`
+}
+
+// RevenueSeries is the response shape for /revenue-series. Echoes
+// back the requested range + chosen granularity so the frontend can
+// label axes correctly without hard-coding the mapping.
+type RevenueSeries struct {
+	Range       RevenueRange   `json:"range"`
+	Granularity string         `json:"granularity"`
+	Points      []RevenuePoint `json:"points"`
+}
+
 // OrgStats computes the snapshot in two SQL round-trips: one for the
 // scalar aggregates (FILTER clauses keep it to a single pass) and one
 // for the customer leaderboard (joined to customers for name + email).
@@ -98,4 +141,60 @@ func (r Repo) OrgStats(organizationID int64) (*OrgStats, error) {
 		return nil, fmt.Errorf("scan top customers: %w", err)
 	}
 	return &stats, nil
+}
+
+// RevenueSeries returns gap-free time-series data for the org's paid
+// revenue across the requested duration.
+//
+// SQL strategy: a CTE built from generate_series defines every bucket
+// in the range, then LEFT JOINs to `invoices` so days/weeks with zero
+// activity still appear (as a `total: 0` point) instead of being
+// silently dropped. Without this, the frontend chart would skip empty
+// stretches and visually compress time — a quiet week would look the
+// same width as a busy one.
+//
+// The "marked paid" timestamp is `COALESCE(inventory_deducted_at,
+// updated_at)` for the same reason as OrgStats: pre-migration paid
+// invoices have NULL inventory_deducted_at, so we fall back to
+// updated_at (which for terminal-status invoices is functionally the
+// paid timestamp).
+func (r Repo) RevenueSeries(organizationID int64, rng RevenueRange) (*RevenueSeries, error) {
+	if organizationID == 0 {
+		return nil, fmt.Errorf("organization_id is required")
+	}
+	cfg, ok := rangeConfig[rng]
+	if !ok {
+		return nil, fmt.Errorf("unsupported range: %q", rng)
+	}
+
+	query := fmt.Sprintf(`
+		WITH buckets AS (
+			SELECT generate_series(
+				date_trunc('%s', now() - interval '%s'),
+				date_trunc('%s', now()),
+				interval '%s'
+			) AS bucket
+		)
+		SELECT
+			to_char(b.bucket, 'YYYY-MM-DD')                    AS bucket,
+			COALESCE(SUM(i.amount), 0)                          AS total,
+			COUNT(i.*)                                          AS count
+		FROM buckets b
+		LEFT JOIN invoices i
+			ON i.organization_id = ?
+			AND i.status = 'paid'
+			AND date_trunc('%s', COALESCE(i.inventory_deducted_at, i.updated_at)) = b.bucket
+		GROUP BY b.bucket
+		ORDER BY b.bucket ASC
+	`, cfg.Granularity, cfg.Interval, cfg.Granularity, cfg.Step, cfg.Granularity)
+
+	var points []RevenuePoint
+	if err := r.DB.Raw(query, organizationID).Scan(&points).Error; err != nil {
+		return nil, fmt.Errorf("scan revenue series: %w", err)
+	}
+	return &RevenueSeries{
+		Range:       rng,
+		Granularity: cfg.Granularity,
+		Points:      points,
+	}, nil
 }
